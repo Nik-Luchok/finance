@@ -1,0 +1,21 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    Sell
+{% endblock %}
+
+{% block main %}
+
+    <form class="d-inline-block" action="/sell" method="post">
+        <select class="form-select mb-3 mx-auto" name="symbol" id="symbol" autofocus>
+                <option value="None" selected>None</option>
+            {% for row in rows %}
+                <option value="{{ row["stock_symbol"] }}">{{ row["stock_symbol"] }}</option>
+            {% endfor %}
+        </select>
+        <input class="form-control w-auto mx-auto mb-3" type="number" name="number" placeholder="Number">
+        <button class="btn btn-primary" type="submit">Sell</button>
+
+    </form>
+
+{% endblock %}

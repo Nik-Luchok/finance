@@ -1,0 +1,47 @@
+{% extends "layout.html" %}
+
+{% block title %}
+   History
+{% endblock %}
+
+{% block main %}
+
+<div class="container-sm text-start">
+   <h1 class="h1">Transaction History</h1>
+   <div class="table-responsive-xl" >
+      <table class="table">
+         <thead>
+            <tr>
+               <th>Stock</th>
+               <th>Amount</th>
+               <th>Price at time</th>
+               <th>Operation</th>
+               <th>Time UTC</th>
+            </tr>
+         </thead>
+         <tbody>
+            {% if (rows is defined) and rows %}
+                {% for row in rows %}
+                <tr>
+                   <td>{{ row["stock_symbol"] }}</td>
+                   <td>{{ row["stock_amount"] }}</td>
+                   <td>{{ row["stock_price"] }}</td>
+                   <td>{{ row["transaction_type"] }}</td>
+                   <td>{{ row["timestamp"] }}</td>
+
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td  colspan="4" class="text-center fs-3">You have no transactions, yet!</td>
+                </tr>
+                <tr>
+                    <td  colspan="4" class="text-center fs-5"><a href="/buy">Buy</a> some stocks and your operations will appear here</td>
+                </tr>
+            {% endif %}
+         </tbody>
+      </table>
+   </div>
+</div>
+
+{% endblock %}

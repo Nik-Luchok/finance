@@ -1,0 +1,74 @@
+{% extends "layout.html" %}
+
+{% block js %}
+   <script src="../static/offcanvas.js"></script>
+{% endblock %}
+
+{% block title %}
+   Portfolio
+{% endblock %}
+
+{% block main %}
+
+<div class="container-sm text-start">
+   <h1 class="h1">Portfolio</h1>
+   <div class="table-responsive-xl" >
+      <table class="table">
+         <thead>
+            <tr>
+               <th>Stock</th>
+               <th>Amount owned</th>
+               <th>Current price</th>
+               <th>Value</th>
+            </tr>
+         </thead>
+         <tbody>
+            {% for row in rows %}
+            <tr>
+               <td>{{ row["stock_symbol"] }}</td>
+               <td>{{ row["stock_amount"] }}</td>
+               <td>{{ row["price"] }}</td>
+               <td>{{ row["sum"] }}</td>
+               <td>
+                  <button class="offcanvas_btn btn btn-primary" type="button" data-symbol="{{ row["stock_symbol"] }}" data-amount="{{ row["stock_amount"] }}" data-bs-toggle="offcanvas" data-bs-target="#offcanvasBottom" aria-controls="offcanvasBottom">
+                     Buy/Sell
+                  </button>
+               </td>
+
+            </tr>
+            {% endfor %}
+            <tr>
+               <th scope="row">Cash</th>
+               <td></td>
+               <td></td>
+               <td>{{ cash }}</td>
+            </tr>
+            <tr>
+               <th scope="row">Total</th>
+               <td></td>
+               <td></td>
+               <td>{{ total }}</td>
+            </tr>
+         </tbody>
+      </table>
+
+
+      <div class="offcanvas offcanvas-bottom" tabindex="-1" id="offcanvasBottom" aria-labelledby="offcanvasBottomLabel" data-bs-scroll="true" data-bs-backdrop="false">
+         <div class="offcanvas-header">
+            <h5 id="offcanvas_title" class="offcanvas-title" id="offcanvasBottomLabel">Offcanvas Titel</h5>
+            <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+         </div>
+         <div class="offcanvas-body small text-center">
+
+           <form class="d-inline-block" action="/sell" method="post">
+            <input type="hidden" id="symbol" name="symbol" value="">
+            <input class="form-control w-auto mx-auto mb-3" type="number" name="number" placeholder="Number">
+            <button class="btn btn-primary" type="submit">Sell</button>
+            <button formaction="/buy" class="btn btn-primary" type="submit">Buy</button>
+           </form>
+
+         </div>
+
+      </div>
+
+{% endblock %}
