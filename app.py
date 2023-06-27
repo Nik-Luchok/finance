@@ -79,22 +79,17 @@ def index():
 def buy():
     """Buy shares of stock"""
     if request.method == "POST":
-
+        number = request.form.get("number")
         symbol = request.form.get("symbol")
+
         if not symbol:
             flash("Type something in Symbol field to buy",
                   category='warning')
             return redirect(request.url)
 
-        # validate number
-        number = request.form.get("number")
-        if not number.isdigit():
-            flash("Shares must be a positive integer",
-                  category='warning')
-            return redirect(request.url)
-        number = int(number)
-        if number == 0:
-            flash("Shares must be a positive integer, starting from 1",
+        number = _validate_shares_num(number)
+        if not number:
+            flash("Please provide valid number of shares",
                   category='warning')
             return redirect(request.url)
         
@@ -273,7 +268,6 @@ def quote():
 @app.route("/register", methods=["GET", "POST"])
 def register():
     """Register user"""
-    # if we get here by form request
     if request.method == "POST":
         username = request.form.get("username")
         password_1 = request.form.get("password")
@@ -318,38 +312,35 @@ def register():
 @login_required
 def sell():
     """Sell shares of stock"""
-
-    # check request method
     if request.method == "POST":
-        # validate data
         number = request.form.get("number")
-        if not number.isdigit():
-            flash("Number must be a positive integer",
-                  category='warning')
-            return redirect('/')
-        number = int(number)
-        # check not 0
-        if number == 0:
+        symbol = request.form.get("symbol")
+
+        number = _validate_shares_num(number)
+        if not number:
             flash("Please provide valid number of shares",
                   category='warning')
             return redirect('/')
 
-        symbol = request.form.get("symbol")
-        if (not symbol) or symbol == "None":
-            flash("Select stock symbol",
+        if not symbol:
+            flash("Type something in Symbol field to buy",
                   category='warning')
             return redirect('/')
 
-        # select all stocks that user owns globally in this function
-        rows = db.execute("SELECT * FROM stocks WHERE user_id = ?", session["user_id"])
-
-        if not any(row["stock_symbol"] == symbol for row in rows):
+        # select all stocks that user owns
+        stocks = db.execute("""SELECT * 
+                               FROM stocks 
+                               WHERE user_id = ?""",
+                            session["user_id"]
+                            )
+        # check if user owns them
+        if not any(row["stock_symbol"] == symbol for row in stocks):
             flash(f"You don't have {symbol} shares",
                   category='warning')
             return redirect(request.url)
 
-        # check the amount of owned stock
-        for row in rows:
+        # validate if ser owns that ammount
+        for row in stocks:
             if row["stock_symbol"] == symbol:
                 if row["stock_amount"] < number:
                     flash(f"You don't have such amount of {symbol}",
@@ -357,50 +348,104 @@ def sell():
                     return redirect('/')
                 else:
                     break
-
-        # deduct the amount of stocks and add cash coresponding to the current price
-        # find current price
+        
+        # quote current stock info
         quote_info = lookup(symbol)
 
-        # how much cash a user would get if he sells stocks
+        # calculate new cash ballance
+        old_users_cash = db.execute("""SELECT cash 
+                                       FROM users 
+                                       WHERE id = ?""",
+                                    session["user_id"]
+                                    )[0]["cash"]
+
         plus_cash = quote_info["price"] * number
-
-        # select current amount of cash
-        old_users_cash = db.execute("SELECT cash FROM users WHERE id = ?", session["user_id"])[0]["cash"]
-
-        # calculate new amount of user's cash
         new_users_cash = old_users_cash + plus_cash
 
-        # select current amount of stocks
-        old_stock_amount = db.execute("SELECT stock_amount FROM stocks WHERE user_id = ? AND stock_symbol = ?",
-                                      session["user_id"], symbol)[0]["stock_amount"]
+        # calculate new stocks ballance
+        old_stock_amount = db.execute("""SELECT stock_amount 
+                                         FROM stocks 
+                                         WHERE user_id = ? 
+                                         AND stock_symbol = ?""",
+                                      session["user_id"],
+                                      symbol
+                                      )[0]["stock_amount"]
 
-        # calculate new amount of stocks
         new_stock_amount = old_stock_amount - number
+        if new_stock_amount < 0:
+            flash("Error has occured, operation declined",
+                  category='warning')
+            raise ValueError(
+                f"new_stock_ammount < 0: {new_stock_amount}\n"
+                f"user id: {session['user_id']}\n"
+                "Check if validation works"
+            )
 
-        # insert new data in the database
         # record transaction
         transaction_type = "SELL"
-        db.execute("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, datetime('now'))",
-                   session["user_id"], quote_info["symbol"], number, quote_info["price"], transaction_type)
+        db.execute("""INSERT INTO transactions 
+                      VALUES (?, ?, ?, ?, ?, datetime('now'))""",
+                   session["user_id"], 
+                   quote_info["symbol"], 
+                   number, 
+                   quote_info["price"], 
+                   transaction_type
+                   )
 
-        # cash
-        db.execute("UPDATE users SET cash = ? WHERE id = ?", new_users_cash, session["user_id"])
+        # update user's cash ballance
+        db.execute("""UPDATE users 
+                      SET cash = ? 
+                      WHERE id = ?""",
+                   new_users_cash,
+                   session["user_id"]
+                   )
 
         # amount of stocks
         # if after being sold, the amount of stocks = 0, delete row in sql
         if new_stock_amount == 0:
-            db.execute("DELETE FROM stocks WHERE user_id = ? AND stock_symbol = ?", session["user_id"], symbol)
+            db.execute("""DELETE FROM stocks 
+                          WHERE user_id = ? 
+                          AND stock_symbol = ?""", 
+                       session["user_id"], 
+                       symbol
+                       )
 
         else:
-            db.execute("UPDATE stocks SET stock_amount = ? WHERE user_id = ? AND stock_symbol = ?",
-                       new_stock_amount, session["user_id"], symbol)
+            db.execute("""UPDATE stocks 
+                          SET stock_amount = ? 
+                          WHERE user_id = ? 
+                          AND stock_symbol = ?""",
+                       new_stock_amount, 
+                       session["user_id"], 
+                       symbol
+                       )
 
         flash(f"You sold {number} of {symbol} stocks")
         return redirect("/")
 
     else:
         # select all stocks that user owns globally in this function
-        rows = db.execute("SELECT * FROM stocks WHERE user_id = ?", session["user_id"])
+        stocks = db.execute("""SELECT * 
+                               FROM stocks 
+                               WHERE user_id = ?""",
+                            session["user_id"]
+                            )
 
-        return render_template("sell.html", rows=rows,)
+        return render_template("sell.html", rows=stocks)
+    
+
+def _validate_shares_num(num: str) -> int:
+    """Validates string of digits (shares number)
+
+    if num is digits string AND num != 0:
+        return: int(num) 
+    else: return 0
+    """
+    if not num.isdigit():
+        return 0
+       
+    num = int(num)
+
+    if num == 0:
+        return 0   
+    return num
