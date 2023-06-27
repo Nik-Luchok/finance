@@ -252,7 +252,7 @@ def quote():
         if not symbol:
             flash("Type in Symbol field to search",
                   category='warning')
-            return redirect('/')
+            return redirect(request.url)
 
         # try to search for symbol
         quote_info = lookup(symbol)
@@ -260,7 +260,7 @@ def quote():
             # if not found
             flash(f"No company found with: {symbol}",
                   category='warning')
-            return redirect('/')
+            return redirect(request.url)
 
         # if found
         flash("Found")
@@ -275,48 +275,38 @@ def register():
     """Register user"""
     # if we get here by form request
     if request.method == "POST":
-        # save submitted data in variables
         username = request.form.get("username")
-        # TODO validate data
+        password_1 = request.form.get("password")
+        password_2 = request.form.get("confirmation")
 
-        if not username:
-            flash("Please enter the username",
+        if not username or not password_1 or not password_2:
+            flash("Please enter the username and password with confirmation",
                   category='warning')
-            return redirect('/register')
+            return redirect(request.url)
 
-        # get a list of dict from database
-        rows = db.execute("SELECT username FROM users WHERE (username = ?);", username)
-
-        # found a data in a database
-        if len(rows) >= 1:
-            flash("Sorry, this username is already taken, choose another one",
+        # check if user already exists
+        users = db.execute("""SELECT username 
+                              FROM users 
+                              WHERE (username = ?);""",
+                           username
+                           )
+        if users:
+            flash("Username is already taken, choose another one",
                   category='warning')
-            return redirect('/')
+            return redirect(request.url)
 
-        password = request.form.get("password")
-        # TODO validate data
-        if not password:
-            flash("Please enter the password",
+        # compare passwords
+        if password_1 != password_2:
+            flash("Passwords don't match",
                   category='warning')
-            return redirect('/')
+            return redirect(request.url)
 
-        confirmation = request.form.get("confirmation")
-        # TODO validate data
-        if not confirmation:
-            flash("Please confirm your password",
-                  category='warning')
-            return redirect('/')
-
-        # compare passwords, alert user if don't match
-        if password != confirmation:
-            flash("passwords don't match",
-                  category='warning')
-            return redirect('/')
-
-        # hash the password
-        hashed_password = generate_password_hash(password)
-
-        db.execute("INSERT INTO users (username, hash) VALUES (?, ?)", username, hashed_password)
+        # hash the password, record new user
+        hashed_password = generate_password_hash(password_1)
+        db.execute("""INSERT INTO users (username, hash) 
+                      VALUES (?, ?)""", 
+                   username, hashed_password
+                   )
 
         # redirect to login
         return redirect("/login")
