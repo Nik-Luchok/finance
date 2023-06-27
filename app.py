@@ -190,38 +190,40 @@ def history():
 def login():
     """Log user in"""
     if request.method == "POST":
+        username = request.form.get('username')
+        password = request.form.get('password')
 
         # Ensure username was submitted
-        if not request.form.get("username"):
-            print(1)
+        if not username:
             flash('Please provide username',
                   category='warning')
-            return redirect('/login')
+            return redirect(request.url)
 
         # Ensure password was submitted
-        elif not request.form.get("password"):
-            print(2)
+        elif not password:
             flash('Please provide password',
                   category='warning')
-            return redirect('/login')
-
-        # Query database for username
-        rows = db.execute("SELECT * FROM users WHERE username = ?", request.form.get("username"))
-
+            return redirect(request.url)
+        
         # Ensure username exists and password is correct
-        if len(rows) != 1 or not check_password_hash(rows[0]["hash"], request.form.get("password")):
+        user_db_query = db.execute("""SELECT * 
+                                      FROM users 
+                                      WHERE username = ?""",
+                                   username
+                                   )
+        if (    len(user_db_query) != 1 or not
+                check_password_hash(user_db_query[0]["hash"], password)):
+            # if any of the conditions is true
             flash("Invalid username or password",
                   category='warning')
-            return redirect('/login')
+            return redirect(request.url)
         
         # Forget previous user session with id
         session.clear()
 
-        # Remember which user has logged in
-        session["user_id"] = rows[0]["id"]
-
-        # store username to display in the template
-        session["username"] = rows[0]["username"]
+        # record new session
+        session["user_id"] = user_db_query[0]["id"]
+        session["username"] = username
 
         # Redirect user to home page
         return redirect("/")
@@ -234,12 +236,10 @@ def login():
 @app.route("/logout")
 def logout():
     """Log user out"""
-
-    # Forget any user_id
     session.clear()
 
     # Redirect user to login form
-    return redirect("/")
+    return redirect("/login")
 
 
 @app.route("/quote", methods=["GET", "POST"])
