@@ -7,7 +7,6 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from helpers import login_required, lookup, usd
 
-# Configure application
 app = Flask(__name__)
 
 # Custom filter
@@ -39,34 +38,40 @@ def after_request(response):
 @login_required
 def index():
     """Show portfolio of stocks"""
-    # select stocks that user owns from db
-    rows = db.execute("SELECT * FROM stocks WHERE user_id = ?", session["user_id"])
+    # load user cash and stocks from db
+    stocks = db.execute("""SELECT *
+                           FROM stocks
+                           WHERE user_id = ?""",
+                        session["user_id"]
+                        )
+    cash = db.execute("""SELECT cash
+                         FROM users
+                         WHERE id = ?""",
+                      session["user_id"]
+                      )[0]["cash"]
 
-    # select cash that user owns from db
-    cash = db.execute("SELECT cash FROM users WHERE id = ?", session["user_id"])[0]["cash"]
+    all_stocks_value = 0
+    # iterate user stocks information, update stocks 
+    for i, stock in enumerate(stocks):
+        quote_info = lookup(stock["stock_symbol"])
 
-    # declare total = cash + sum of all value of actions
-    total = 0
-    # iterate the list of dictionaries with index number
-    for i in range(len(rows)):
-        # save quote dict for a searched quote
-        quote_dict = lookup(rows[i]["stock_symbol"])
+        stock_total_value = quote_info["price"] * stock["stock_amount"]
+        all_stocks_value += stock_total_value
 
-        # append price to the corresponding action
-        rows[i]["price"] = usd(quote_dict["price"])
+        # convert values to str, add to stocks
+        stocks[i]["stock_total_value"] = usd(stock_total_value)
+        stocks[i]["price"] = usd(quote_info["price"])
 
-        # calculate sum and use it to calculate total
-        sum = quote_dict["price"] * rows[i]["stock_amount"]
-        total = total + sum
+    portfolio_value = all_stocks_value + cash
+    cash = usd(cash)
+    portfolio_value = usd(portfolio_value)
 
-        # change sum int to str and save
-        rows[i]["sum"] = usd(sum)
-
-    # add cash to total value of actions
-    total = total + cash
-
-    # render template while converting total and cahs to str
-    return render_template("index.html", rows=rows, cash=usd(cash), total=usd(total))
+    return render_template(
+            "index.html",
+            rows=stocks,
+            cash=cash,
+            total=portfolio_value
+        )
 
 
 @app.route("/buy", methods=["GET", "POST"])
@@ -74,122 +79,146 @@ def index():
 def buy():
     """Buy shares of stock"""
     if request.method == "POST":
+        number = request.form.get("number")
         symbol = request.form.get("symbol")
-        # validate user data
+
         if not symbol:
             flash("Type something in Symbol field to buy",
                   category='warning')
-            return redirect('/')
+            return redirect(request.url)
 
-        # try to search for symbol
-        quote_dict = lookup(symbol)
-        if quote_dict is None:
+        number = _validate_shares_num(number)
+        if not number:
+            flash("Please provide valid number of shares",
+                  category='warning')
+            return redirect(request.url)
+        
+        # quote a stock
+        quote_info = lookup(symbol)
+        if quote_info is None:
             # if not found
             flash(f"No company found with: {symbol}",
                   category='warning')
-            return redirect('/')
+            return redirect(request.url)
 
-        # validate number
-        number = request.form.get("number")
-        if not number.isdigit():
-            flash("Shares must be a positive integer",
-                  category='warning')
-            return redirect('/')
-        number = int(number)
-        # check not 0
-        if number == 0:
-            flash("Shares must be a positive integer, starting from 1",
-                  category='warning')
-            return redirect('/')
+        cash = db.execute("""SELECT cash 
+                             FROM users
+                             WHERE (id = ?)""",
+                          session["user_id"]
+                          )[0]["cash"]
 
-        # can user buy such amount? check database. If not, say that to user and do nothing
-        # select cash from DB for the current user
-        cash = db.execute("SELECT cash FROM users WHERE (id = ?)", session["user_id"])[0]["cash"]
-
-        # how much costs transaction
-        transcation_cost = quote_dict["price"] * number
-
-        # can user buy?
+        # check if user has enough cash to have a transaction
+        transcation_cost = quote_info["price"] * number
         if cash < transcation_cost:
             flash("Transaction declined: Not enough amount in the wallet",
-                  category='warning')
-            return redirect('/')
+                  category='warning'
+                  )
+            return redirect(request.url)
 
-        # save new numbers to the database
-        # record transaction
+        # record transaction to history
         transaction_type = "BUY"
-        db.execute("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, datetime('now'))",
-                   session["user_id"], quote_dict["symbol"], number, quote_dict["price"], transaction_type)
+        db.execute("""INSERT INTO transactions
+                      VALUES (?, ?, ?, ?, ?, datetime('now'))""",
+                   session["user_id"],
+                   quote_info["symbol"], 
+                   number, quote_info["price"], 
+                   transaction_type
+                   )
 
-        # deduct the amount he spend from what he have right now
-        db.execute("UPDATE users SET cash = ? WHERE (id = ?)", (cash - transcation_cost), session["user_id"])
+        # record new account balance
+        db.execute("""UPDATE users 
+                      SET cash = ? 
+                      WHERE (id = ?)""",
+                   (cash - transcation_cost),
+                   session["user_id"]
+                   )
 
-        # save symbol
-        symbol = quote_dict["symbol"]
+        # record the new stocks amount user owns
+        symbol = quote_info["symbol"]
+        row = db.execute("""SELECT * 
+                            FROM stocks 
+                            WHERE user_id = ? 
+                            AND stock_symbol = ?""",
+                         session["user_id"],
+                         symbol
+                         )
 
-        # try to find a row with user id and stock name
-        row = db.execute("SELECT * FROM stocks WHERE user_id = ? AND stock_symbol = ?",
-                         session["user_id"], symbol)
-
-        # record new stocks that user owns
         if len(row) == 0:
-            db.execute("INSERT INTO stocks VALUES (?, ?, ?)", session["user_id"], symbol, number)
+            db.execute("""INSERT INTO stocks 
+                          VALUES (?, ?, ?)""",
+                       session["user_id"],
+                       symbol, 
+                       number
+                       )
         else:
-            db.execute("UPDATE stocks SET stock_amount = ? WHERE user_id = ? AND stock_symbol = ?",
-                       (row[0]["stock_amount"] + number), session["user_id"], symbol)
+            db.execute("""UPDATE stocks 
+                          SET stock_amount = ? 
+                          WHERE user_id = ? 
+                          AND stock_symbol = ?""",
+                       (row[0]["stock_amount"] + number), 
+                       session["user_id"], 
+                       symbol
+                       )
 
         # redirect to portfolio
-        flash(f"Bought successfully: {number}")
+        flash(f"Bought successfully: {number} {symbol} shares")
         return redirect("/")
     else:
-        return render_template("buy.html", username=session["username"])
+        return render_template("buy.html")
 
 
 @app.route("/history")
 @login_required
 def history():
     """Show history of transactions"""
-    rows = db.execute("SELECT * FROM transactions WHERE (user_id = ?) ORDER BY timestamp DESC", session["user_id"])
+    rows = db.execute("""SELECT * 
+                         FROM transactions 
+                         WHERE (user_id = ?) 
+                         ORDER BY timestamp DESC""",
+                      session["user_id"]
+                      )
 
-    return render_template("history.html", username=session["username"], rows=rows)
+    return render_template("history.html", rows=rows)
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     """Log user in"""
     if request.method == "POST":
+        username = request.form.get('username')
+        password = request.form.get('password')
 
         # Ensure username was submitted
-        if not request.form.get("username"):
-            print(1)
+        if not username:
             flash('Please provide username',
                   category='warning')
-            return redirect('/login')
+            return redirect(request.url)
 
         # Ensure password was submitted
-        elif not request.form.get("password"):
-            print(2)
+        elif not password:
             flash('Please provide password',
                   category='warning')
-            return redirect('/login')
-
-        # Query database for username
-        rows = db.execute("SELECT * FROM users WHERE username = ?", request.form.get("username"))
-
+            return redirect(request.url)
+        
         # Ensure username exists and password is correct
-        if len(rows) != 1 or not check_password_hash(rows[0]["hash"], request.form.get("password")):
+        user_db_query = db.execute("""SELECT * 
+                                      FROM users 
+                                      WHERE username = ?""",
+                                   username
+                                   )
+        if (    len(user_db_query) != 1 or not
+                check_password_hash(user_db_query[0]["hash"], password)):
+            # if any of the conditions is true
             flash("Invalid username or password",
                   category='warning')
-            return redirect('/login')
+            return redirect(request.url)
         
         # Forget previous user session with id
         session.clear()
 
-        # Remember which user has logged in
-        session["user_id"] = rows[0]["id"]
-
-        # store username to display in the template
-        session["username"] = rows[0]["username"]
+        # record new session
+        session["user_id"] = user_db_query[0]["id"]
+        session["username"] = username
 
         # Redirect user to home page
         return redirect("/")
@@ -202,12 +231,10 @@ def login():
 @app.route("/logout")
 def logout():
     """Log user out"""
-
-    # Forget any user_id
     session.clear()
 
     # Redirect user to login form
-    return redirect("/")
+    return redirect("/login")
 
 
 @app.route("/quote", methods=["GET", "POST"])
@@ -220,71 +247,60 @@ def quote():
         if not symbol:
             flash("Type in Symbol field to search",
                   category='warning')
-            return redirect('/')
+            return redirect(request.url)
 
         # try to search for symbol
-        quote_dict = lookup(symbol)
-        if quote_dict is None:
+        quote_info = lookup(symbol)
+        if quote_info is None:
             # if not found
             flash(f"No company found with: {symbol}",
                   category='warning')
-            return redirect('/')
+            return redirect(request.url)
 
         # if found
         flash("Found")
 
-        return render_template("quoted.html", quote=quote_dict, username=session["username"])
+        return render_template("quoted.html", quote=quote_info,)
     else:
-        return render_template("quote.html", username=session["username"])
+        return render_template("quote.html",)
 
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
     """Register user"""
-    # if we get here by form request
     if request.method == "POST":
-        # save submitted data in variables
         username = request.form.get("username")
-        # TODO validate data
+        password_1 = request.form.get("password")
+        password_2 = request.form.get("confirmation")
 
-        if not username:
-            flash("Please enter the username",
+        if not username or not password_1 or not password_2:
+            flash("Please enter the username and password with confirmation",
                   category='warning')
-            return redirect('/register')
+            return redirect(request.url)
 
-        # get a list of dict from database
-        rows = db.execute("SELECT username FROM users WHERE (username = ?);", username)
-
-        # found a data in a database
-        if len(rows) >= 1:
-            flash("Sorry, this username is already taken, choose another one",
+        # check if user already exists
+        users = db.execute("""SELECT username 
+                              FROM users 
+                              WHERE (username = ?);""",
+                           username
+                           )
+        if users:
+            flash("Username is already taken, choose another one",
                   category='warning')
-            return redirect('/')
+            return redirect(request.url)
 
-        password = request.form.get("password")
-        # TODO validate data
-        if not password:
-            flash("Please enter the password",
+        # compare passwords
+        if password_1 != password_2:
+            flash("Passwords don't match",
                   category='warning')
-            return redirect('/')
+            return redirect(request.url)
 
-        confirmation = request.form.get("confirmation")
-        # TODO validate data
-        if not confirmation:
-            flash("Please confirm your password",
-                  category='warning')
-            return redirect('/')
-
-        # compare passwords, alert user if don't match
-        if password != confirmation:
-            flash("passwords don't match",
-                  category='warning')
-            return redirect('/')
-
-        # hash the password
-        hashed_password = generate_password_hash(password)
-
-        db.execute("INSERT INTO users (username, hash) VALUES (?, ?)", username, hashed_password)
+        # hash the password, record new user
+        hashed_password = generate_password_hash(password_1)
+        db.execute("""INSERT INTO users (username, hash) 
+                      VALUES (?, ?)""", 
+                   username, hashed_password
+                   )
 
         # redirect to login
         return redirect("/login")
@@ -296,38 +312,35 @@ def register():
 @login_required
 def sell():
     """Sell shares of stock"""
-
-    # check request method
     if request.method == "POST":
-        # validate data
         number = request.form.get("number")
-        if not number.isdigit():
-            flash("Number must be a positive integer",
-                  category='warning')
-            return redirect('/')
-        number = int(number)
-        # check not 0
-        if number == 0:
+        symbol = request.form.get("symbol")
+
+        number = _validate_shares_num(number)
+        if not number:
             flash("Please provide valid number of shares",
                   category='warning')
             return redirect('/')
 
-        symbol = request.form.get("symbol")
-        if (not symbol) or symbol == "None":
-            flash("Select stock symbol",
+        if not symbol:
+            flash("Type something in Symbol field to buy",
                   category='warning')
             return redirect('/')
 
-        # select all stocks that user owns globally in this function
-        rows = db.execute("SELECT * FROM stocks WHERE user_id = ?", session["user_id"])
-
-        if not any(row["stock_symbol"] == symbol for row in rows):
+        # select all stocks that user owns
+        stocks = db.execute("""SELECT * 
+                               FROM stocks 
+                               WHERE user_id = ?""",
+                            session["user_id"]
+                            )
+        # check if user owns them
+        if not any(row["stock_symbol"] == symbol for row in stocks):
             flash(f"You don't have {symbol} shares",
                   category='warning')
             return redirect(request.url)
 
-        # check the amount of owned stock
-        for row in rows:
+        # validate if ser owns that ammount
+        for row in stocks:
             if row["stock_symbol"] == symbol:
                 if row["stock_amount"] < number:
                     flash(f"You don't have such amount of {symbol}",
@@ -335,50 +348,104 @@ def sell():
                     return redirect('/')
                 else:
                     break
+        
+        # quote current stock info
+        quote_info = lookup(symbol)
 
-        # deduct the amount of stocks and add cash coresponding to the current price
-        # find current price
-        quote_dict = lookup(symbol)
+        # calculate new cash ballance
+        old_users_cash = db.execute("""SELECT cash 
+                                       FROM users 
+                                       WHERE id = ?""",
+                                    session["user_id"]
+                                    )[0]["cash"]
 
-        # how much cash a user would get if he sells stocks
-        plus_cash = quote_dict["price"] * number
-
-        # select current amount of cash
-        old_users_cash = db.execute("SELECT cash FROM users WHERE id = ?", session["user_id"])[0]["cash"]
-
-        # calculate new amount of user's cash
+        plus_cash = quote_info["price"] * number
         new_users_cash = old_users_cash + plus_cash
 
-        # select current amount of stocks
-        old_stock_amount = db.execute("SELECT stock_amount FROM stocks WHERE user_id = ? AND stock_symbol = ?",
-                                      session["user_id"], symbol)[0]["stock_amount"]
+        # calculate new stocks ballance
+        old_stock_amount = db.execute("""SELECT stock_amount 
+                                         FROM stocks 
+                                         WHERE user_id = ? 
+                                         AND stock_symbol = ?""",
+                                      session["user_id"],
+                                      symbol
+                                      )[0]["stock_amount"]
 
-        # calculate new amount of stocks
         new_stock_amount = old_stock_amount - number
+        if new_stock_amount < 0:
+            flash("Error has occured, operation declined",
+                  category='warning')
+            raise ValueError(
+                f"new_stock_ammount < 0: {new_stock_amount}\n"
+                f"user id: {session['user_id']}\n"
+                "Check if validation works"
+            )
 
-        # insert new data in the database
         # record transaction
         transaction_type = "SELL"
-        db.execute("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, datetime('now'))",
-                   session["user_id"], quote_dict["symbol"], number, quote_dict["price"], transaction_type)
+        db.execute("""INSERT INTO transactions 
+                      VALUES (?, ?, ?, ?, ?, datetime('now'))""",
+                   session["user_id"], 
+                   quote_info["symbol"], 
+                   number, 
+                   quote_info["price"], 
+                   transaction_type
+                   )
 
-        # cash
-        db.execute("UPDATE users SET cash = ? WHERE id = ?", new_users_cash, session["user_id"])
+        # update user's cash ballance
+        db.execute("""UPDATE users 
+                      SET cash = ? 
+                      WHERE id = ?""",
+                   new_users_cash,
+                   session["user_id"]
+                   )
 
         # amount of stocks
         # if after being sold, the amount of stocks = 0, delete row in sql
         if new_stock_amount == 0:
-            db.execute("DELETE FROM stocks WHERE user_id = ? AND stock_symbol = ?", session["user_id"], symbol)
+            db.execute("""DELETE FROM stocks 
+                          WHERE user_id = ? 
+                          AND stock_symbol = ?""", 
+                       session["user_id"], 
+                       symbol
+                       )
 
         else:
-            db.execute("UPDATE stocks SET stock_amount = ? WHERE user_id = ? AND stock_symbol = ?",
-                       new_stock_amount, session["user_id"], symbol)
+            db.execute("""UPDATE stocks 
+                          SET stock_amount = ? 
+                          WHERE user_id = ? 
+                          AND stock_symbol = ?""",
+                       new_stock_amount, 
+                       session["user_id"], 
+                       symbol
+                       )
 
         flash(f"You sold {number} of {symbol} stocks")
         return redirect("/")
 
     else:
         # select all stocks that user owns globally in this function
-        rows = db.execute("SELECT * FROM stocks WHERE user_id = ?", session["user_id"])
+        stocks = db.execute("""SELECT * 
+                               FROM stocks 
+                               WHERE user_id = ?""",
+                            session["user_id"]
+                            )
 
-        return render_template("sell.html", rows=rows, username=session["username"])
+        return render_template("sell.html", rows=stocks)
+    
+
+def _validate_shares_num(num: str) -> int:
+    """Validates string of digits (shares number)
+
+    if num is digits string AND num != 0:
+        return: int(num) 
+    else: return 0
+    """
+    if not num.isdigit():
+        return 0
+       
+    num = int(num)
+
+    if num == 0:
+        return 0   
+    return num

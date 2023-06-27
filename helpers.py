@@ -6,22 +6,29 @@ from flask import redirect, session
 from functools import wraps
 
 
-def login_required(f):
+def login_required(function):
     """
     Decorate routes to require login.
 
     https://flask.palletsprojects.com/en/1.1.x/patterns/viewdecorators/
     """
-    @wraps(f)
+    @wraps(function)
     def decorated_function(*args, **kwargs):
         if session.get("user_id") is None:
             return redirect("/login")
-        return f(*args, **kwargs)
+        return function(*args, **kwargs)
     return decorated_function
 
 
 def lookup(symbol):
-    """Look up quote for symbol."""
+    """Look up quote for symbol.
+    
+    return: Dict{
+        'name': str,
+        'price': float,
+        'symbol': str
+    }
+    """
 
     # Contact API
     try:
