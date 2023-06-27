@@ -176,7 +176,12 @@ def buy():
 @login_required
 def history():
     """Show history of transactions"""
-    rows = db.execute("SELECT * FROM transactions WHERE (user_id = ?) ORDER BY timestamp DESC", session["user_id"])
+    rows = db.execute("""SELECT * 
+                         FROM transactions 
+                         WHERE (user_id = ?) 
+                         ORDER BY timestamp DESC""",
+                      session["user_id"]
+                      )
 
     return render_template("history.html", rows=rows)
 
