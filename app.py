@@ -7,7 +7,6 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from helpers import login_required, lookup, usd
 
-# Configure application
 app = Flask(__name__)
 
 # Custom filter
@@ -39,34 +38,36 @@ def after_request(response):
 @login_required
 def index():
     """Show portfolio of stocks"""
-    # select stocks that user owns from db
-    rows = db.execute("SELECT * FROM stocks WHERE user_id = ?", session["user_id"])
+    # load user cash and stocks from db
+    stocks = db.execute(
+        "SELECT * FROM stocks WHERE user_id = ?", session["user_id"]
+        )
+    cash = db.execute(
+        "SELECT cash FROM users WHERE id = ?", session["user_id"]
+        )[0]["cash"]
 
-    # select cash that user owns from db
-    cash = db.execute("SELECT cash FROM users WHERE id = ?", session["user_id"])[0]["cash"]
+    all_stocks_value = 0
+    # iterate user stocks information, update stocks 
+    for i, stock in enumerate(stocks):
+        quote_info = lookup(stock["stock_symbol"])
 
-    # declare total = cash + sum of all value of actions
-    total = 0
-    # iterate the list of dictionaries with index number
-    for i in range(len(rows)):
-        # save quote dict for a searched quote
-        quote_dict = lookup(rows[i]["stock_symbol"])
+        stock_total_value = quote_info["price"] * stock["stock_amount"]
+        all_stocks_value += stock_total_value
 
-        # append price to the corresponding action
-        rows[i]["price"] = usd(quote_dict["price"])
+        # convert values to str, add to stocks
+        stocks[i]["stock_total_value"] = usd(stock_total_value)
+        stocks[i]["price"] = usd(quote_info["price"])
 
-        # calculate sum and use it to calculate total
-        sum = quote_dict["price"] * rows[i]["stock_amount"]
-        total = total + sum
+    portfolio_value = all_stocks_value + cash
+    cash = usd(cash)
+    portfolio_value = usd(portfolio_value)
 
-        # change sum int to str and save
-        rows[i]["sum"] = usd(sum)
-
-    # add cash to total value of actions
-    total = total + cash
-
-    # render template while converting total and cahs to str
-    return render_template("index.html", rows=rows, cash=usd(cash), total=usd(total))
+    return render_template(
+            "index.html",
+            rows=stocks,
+            cash=cash,
+            total=portfolio_value
+        )
 
 
 @app.route("/buy", methods=["GET", "POST"])
@@ -82,8 +83,8 @@ def buy():
             return redirect('/')
 
         # try to search for symbol
-        quote_dict = lookup(symbol)
-        if quote_dict is None:
+        quote_info = lookup(symbol)
+        if quote_info is None:
             # if not found
             flash(f"No company found with: {symbol}",
                   category='warning')
@@ -107,7 +108,7 @@ def buy():
         cash = db.execute("SELECT cash FROM users WHERE (id = ?)", session["user_id"])[0]["cash"]
 
         # how much costs transaction
-        transcation_cost = quote_dict["price"] * number
+        transcation_cost = quote_info["price"] * number
 
         # can user buy?
         if cash < transcation_cost:
@@ -119,13 +120,13 @@ def buy():
         # record transaction
         transaction_type = "BUY"
         db.execute("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, datetime('now'))",
-                   session["user_id"], quote_dict["symbol"], number, quote_dict["price"], transaction_type)
+                   session["user_id"], quote_info["symbol"], number, quote_info["price"], transaction_type)
 
         # deduct the amount he spend from what he have right now
         db.execute("UPDATE users SET cash = ? WHERE (id = ?)", (cash - transcation_cost), session["user_id"])
 
         # save symbol
-        symbol = quote_dict["symbol"]
+        symbol = quote_info["symbol"]
 
         # try to find a row with user id and stock name
         row = db.execute("SELECT * FROM stocks WHERE user_id = ? AND stock_symbol = ?",
@@ -223,8 +224,8 @@ def quote():
             return redirect('/')
 
         # try to search for symbol
-        quote_dict = lookup(symbol)
-        if quote_dict is None:
+        quote_info = lookup(symbol)
+        if quote_info is None:
             # if not found
             flash(f"No company found with: {symbol}",
                   category='warning')
@@ -233,7 +234,7 @@ def quote():
         # if found
         flash("Found")
 
-        return render_template("quoted.html", quote=quote_dict, username=session["username"])
+        return render_template("quoted.html", quote=quote_info, username=session["username"])
     else:
         return render_template("quote.html", username=session["username"])
 
@@ -338,10 +339,10 @@ def sell():
 
         # deduct the amount of stocks and add cash coresponding to the current price
         # find current price
-        quote_dict = lookup(symbol)
+        quote_info = lookup(symbol)
 
         # how much cash a user would get if he sells stocks
-        plus_cash = quote_dict["price"] * number
+        plus_cash = quote_info["price"] * number
 
         # select current amount of cash
         old_users_cash = db.execute("SELECT cash FROM users WHERE id = ?", session["user_id"])[0]["cash"]
@@ -360,7 +361,7 @@ def sell():
         # record transaction
         transaction_type = "SELL"
         db.execute("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, datetime('now'))",
-                   session["user_id"], quote_dict["symbol"], number, quote_dict["price"], transaction_type)
+                   session["user_id"], quote_info["symbol"], number, quote_info["price"], transaction_type)
 
         # cash
         db.execute("UPDATE users SET cash = ? WHERE id = ?", new_users_cash, session["user_id"])
