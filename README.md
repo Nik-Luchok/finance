@@ -6,6 +6,7 @@ Register and try investing yourself! Now 10000$(non real) gratis for new users:
 https://nikitalukinov.pythonanywhere.com/
 
 # Features
+-Code refactored following PEP8 and CleanCode principles
 
 -User authentication with password hashing
 
